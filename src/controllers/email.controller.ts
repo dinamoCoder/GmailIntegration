@@ -1,5 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { EmailService } from '../services/email.service';
+const cheerio = require('cheerio');
+const axios = require('axios');
 
 @Controller('emails')
 export class EmailController {
@@ -14,6 +16,31 @@ export class EmailController {
     }
 
     return await this.emailService.getEmailById(emailId, accessToken);
+  }
+
+  @Get('/api/thumbnail')
+  async getThumbnail(@Query() query: any) {
+    if (!query.url) {
+      throw new BadRequestException( 'URL is required' );
+    }
+  
+    try {
+      // Fetch the HTML of the target page
+      const { data } = await axios.get(query.url);
+  
+      // Parse the HTML and extract Open Graph image
+      const $ = cheerio.load(data);
+      const ogImage = $('meta[property="og:image"]').attr('content');
+  
+      if (ogImage) {
+        return { thumbnail: ogImage };
+      } else {
+       // return res.status(404).json({ error: 'Thumbnail not found' });
+      }
+    } catch (error) {
+      console.error('Error fetching thumbnail:', error.message);
+      //return res.status(500).json({ error: 'Failed to fetch thumbnail' });
+    }
   }
 
   @Get()

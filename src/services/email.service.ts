@@ -229,63 +229,75 @@ export class EmailService {
             id: emailId,
           });
       
-          // Get the original email's Message-ID (for the In-Reply-To and References headers)
-          const originalMessageId = originalEmail.data.id;
+          // Extract the required details from the original email
+          const threadId = originalEmail.data.threadId; // Required to keep the reply in the same thread
+          const originalHeaders = originalEmail.data.payload.headers;
       
-          // Get the 'From' field (original sender's email) from the original email
-          const fromEmail = originalEmail.data.payload.headers.find(
-            (header) => header.name === 'From'
-          )?.value;
+          // Find the original 'Message-ID' header
+          const inReplyTo = originalHeaders.find((header) => header.name === 'Message-ID')?.value;
       
-          // Get your own email address (From your Gmail OAuth credentials)
+          if (!threadId || !inReplyTo) {
+            throw new BadRequestException('Original threadId or Message-ID not found.');
+          }
+      
+          // Get the original sender's email
+          const fromEmail = originalHeaders.find((header) => header.name === 'From')?.value;
+      
+          // Get your own email address
           const myEmail = await this.getAuthenticatedUserEmail(accessToken);
       
-          if (!fromEmail) {
-            throw new BadRequestException('Sender email not found.');
+          if (!fromEmail || !myEmail) {
+            throw new BadRequestException('Sender or your email address is required.');
           }
       
-          if (!myEmail) {
-            throw new BadRequestException('Your email address is required.');
-          }
+          // Create a MIME message for the reply
+          const rawMessage = this.createReplyMessage(inReplyTo, fromEmail, myEmail, subject, body);
       
-          // Create a MIME message to reply to the original email
-          const rawMessage = this.createReplyMessage(originalMessageId, fromEmail, myEmail, subject, body);
-      
-          // Send the reply email
+          // Send the reply email within the same thread
           await gmail.users.messages.send({
             userId: 'me',
             requestBody: {
               raw: rawMessage,
+              threadId: threadId, // Attach to the same thread
             },
           });
       
-          return { message: 'Reply sent successfully!' };
+          return { message: 'Reply sent successfully in the same thread!' };
         } catch (error) {
           console.error('Error replying to email:', error);
           throw new BadRequestException('Failed to send reply.');
         }
       }
       
-      // Helper function to create the MIME message (email format)
+      
       private createReplyMessage(inReplyTo: string, to: string, from: string, subject: string, body: string) {
-        // Construct the MIME message for reply
+        // Ensure the subject starts with "Re:" only once
+        const replySubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`;
+      
+        // Construct the MIME message with proper threading headers
         const messageParts = [
           `To: ${to}`,
           `From: ${from}`,
-          `In-Reply-To: 193d4e70bd436972`,  // This is crucial for replying
-          `References: 193d4e70bd436972`,  // Ensures threading
+          `Subject: ${replySubject}`,
+          `In-Reply-To: ${inReplyTo}`,  // Crucial for threading
+          `References: ${inReplyTo}`,   // Maintains conversation thread
           'Content-Type: text/plain; charset="UTF-8"',
           'MIME-Version: 1.0',
-          `Subject: Re: ${subject}`,  // Reply with "Re:"
           '',
-          body,  // Reply body
+          body,
         ];
       
-        // Join the parts of the MIME message and encode it in base64
-        const rawMessage = Buffer.from(messageParts.join('\n')).toString('base64');
-        
+        // Join the MIME message and encode it as base64 URL-safe
+        const rawMessage = Buffer.from(messageParts.join('\n'))
+          .toString('base64')
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+      
         return rawMessage;
       }
+      
+      
       
       // Helper function to get the authenticated user's email address
       private async getAuthenticatedUserEmail(accessToken: string) {
